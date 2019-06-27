@@ -1,0 +1,265 @@
+---
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: import-openapi
+spec:
+  inputs:
+    resources:
+    - name: api-artefacts
+      type: git
+    params:
+    - name: pathToOpenAPI
+      description: The path to the dockerfile to build
+      default: /workspace/api-artefacts/openapi-spec.yaml
+    - name: destination
+      description: The name of the 3scale_toolbox remote
+    - name: privateBaseURL
+      description: The URL of the API Backend
+      default: http://echo-api.3scale.net
+    - name: systemName
+      description: The system_name of the service to create
+      default: api
+    - name: secretName
+      description: Name of the secret containing the 3scale_toolbox remotes list
+  steps:
+  - name: import-openapi
+    image: nmasse/3scale-toolbox:master
+    env:
+    - name: "HOME"
+      value: "/config"
+    command:
+    - 3scale
+    args:
+    - import
+    - openapi
+    - -d
+    - ${inputs.params.destination}
+    - ${inputs.params.pathToOpenAPI}
+    - --override-private-base-url=${inputs.params.privateBaseURL}
+    - --target_system_name=${inputs.params.systemName}
+    volumeMounts:
+    - name: "toolbox-config"
+      mountPath: /config
+  volumes:
+  - name: toolbox-config
+    secret:
+      secretName: ${inputs.params.secretName}
+---
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: apply-application-plan
+spec:
+  inputs:
+    resources:
+    - name: api-artefacts
+      type: git
+    params:
+    - name: destination
+      description: The name of the 3scale_toolbox remote
+    - name: secretName
+      description: Name of the secret containing the 3scale_toolbox remotes list
+    - name: serviceSystemName
+      description: The system_name of the service
+    - name: systemName
+      description: The system_name of the plan to create
+    - name: name
+      description: The name of the plan to create
+  steps:
+  - name: apply-application-plan
+    image: nmasse/3scale-toolbox:master
+    env:
+    - name: "HOME"
+      value: "/config"
+    command:
+    - 3scale
+    args:
+    - application-plan
+    - apply
+    - ${inputs.params.destination}
+    - ${inputs.params.serviceSystemName}
+    - ${inputs.params.systemName}
+    - --name=${inputs.params.name}
+    volumeMounts:
+    - name: "toolbox-config"
+      mountPath: /config
+  volumes:
+  - name: toolbox-config
+    secret:
+      secretName: ${inputs.params.secretName}
+---
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: apply-application
+spec:
+  inputs:
+    params:
+    - name: destination
+      description: The name of the 3scale_toolbox remote
+    - name: secretName
+      description: Name of the secret containing the 3scale_toolbox remotes list
+    - name: serviceSystemName
+      description: The system_name of the service
+    - name: planSystemName
+      description: The system_name of the application plan
+    - name: name
+      description: The name of the application to create
+    - name: description
+      description: The description of the application to create
+    - name: userKey
+      description: The API Key of the Application
+    - name: account
+      description: The Application's account ID
+  steps:
+  - name: apply-application
+    image: nmasse/3scale-toolbox:master
+    env:
+    - name: "HOME"
+      value: "/config"
+    command:
+    - 3scale
+    args:
+    - application
+    - apply
+    - ${inputs.params.destination}
+    - ${inputs.params.userKey}
+    - --service=${inputs.params.serviceSystemName}
+    - --plan=${inputs.params.planSystemName}
+    - --name=${inputs.params.name}
+    - --description=${inputs.params.description}
+    - --account=${inputs.params.account}
+    volumeMounts:
+    - name: "toolbox-config"
+      mountPath: /config
+  volumes:
+  - name: toolbox-config
+    secret:
+      secretName: ${inputs.params.secretName}
+---
+apiVersion: tekton.dev/v1alpha1
+kind: Task
+metadata:
+  name: promote-to-production
+spec:
+  inputs:
+    params:
+    - name: destination
+      description: The name of the 3scale_toolbox remote
+    - name: secretName
+      description: Name of the secret containing the 3scale_toolbox remotes list
+    - name: serviceSystemName
+      description: The system_name of the service
+  steps:
+  - name: promote-to-production
+    image: nmasse/3scale-toolbox:master
+    env:
+    - name: "HOME"
+      value: "/config"
+    command:
+    - 3scale
+    args:
+    - proxy
+    - promote
+    - ${inputs.params.destination}
+    - ${inputs.params.serviceSystemName}
+    volumeMounts:
+    - name: "toolbox-config"
+      mountPath: /config
+  volumes:
+  - name: toolbox-config
+    secret:
+      secretName: ${inputs.params.secretName}
+---
+apiVersion: tekton.dev/v1alpha1
+kind: Pipeline
+metadata:
+  name: deploy-api
+spec:
+  resources:
+  - name: api-artefacts
+    type: git
+  tasks:
+  - name: import-openapi
+    taskRef:
+      name: import-openapi
+    params:
+    - name: pathToOpenAPI
+      value: /workspace/api-artefacts/${params.pathToOpenAPI}
+    - name: systemName
+      value: ${params.targetSystemName}
+    - name: destination
+      value: ${params.destination}
+    - name: secretName
+      value: ${params.secretName}
+    resources:
+      inputs:
+      - name: api-artefacts
+        resource: api-artefacts
+  - name: apply-application-plan
+    taskRef:
+      name: apply-application-plan
+    runAfter:
+    - import-openapi
+    params:
+    - name: destination
+      value: ${params.destination}
+    - name: secretName
+      value: ${params.secretName}
+    - name: serviceSystemName
+      value: ${params.targetSystemName}
+    - name: systemName
+      value: test
+    - name: name
+      value: Test Plan
+    resources:
+      inputs:
+      - name: api-artefacts
+        resource: api-artefacts
+  - name: apply-application
+    taskRef:
+      name: apply-application
+    runAfter:
+    - apply-application-plan
+    params:
+    - name: destination
+      value: ${params.destination}
+    - name: secretName
+      value: ${params.secretName}
+    - name: serviceSystemName
+      value: ${params.targetSystemName}
+    - name: planSystemName
+      value: test
+    - name: name
+      value: Test Application
+    - name: description
+      value: Created by Tekton
+    - name: account
+      value: ${params.developerAccountID}
+    - name: userKey
+      value: super-secret-key-1234
+  - name: promote-to-production
+    taskRef:
+      name: promote-to-production
+    runAfter:
+    - apply-application
+    params:
+    - name: destination
+      value: ${params.destination}
+    - name: secretName
+      value: ${params.secretName}
+    - name: serviceSystemName
+      value: ${params.targetSystemName}
+  params:
+  - name: targetSystemName
+    description: The system_name of the service to create
+    default: api
+  - name: destination
+    description: The name of the 3scale_toolbox remote
+  - name: secretName
+    description: Name of the secret containing the 3scale_toolbox remotes list
+  - name: pathToOpenAPI
+    description: The path to the OpenAPI File to import
+  - name: developerAccountID
+    description: The id of the developer account

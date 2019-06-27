@@ -1,0 +1,35 @@
+---
+apiVersion: tekton.dev/v1alpha1
+kind: PipelineResource
+metadata:
+  name: skaffold-git
+spec:
+  type: git
+  params:
+  - name: revision
+    value: master
+  - name: url
+    value: https://github.com/nmasse-itix/3scale-toolbox-tekton.git
+---
+apiVersion: tekton.dev/v1alpha1
+kind: PipelineRun
+metadata:
+  name: deploy-api
+spec:
+  pipelineRef:
+    name: deploy-api
+  params:
+  - name: targetSystemName
+    value: test
+  - name: destination
+    value: 3scale-saas
+  - name: secretName
+    value: 3scale-toolbox
+  - name: pathToOpenAPI
+    value: saas-usecase-apikey/swagger.yaml
+  - name: developerAccountID
+    value: "__SAAS_DEVELOPER_ACCOUNT_ID__"
+  resources:
+  - name: api-artefacts
+    resourceRef:
+      name: skaffold-git
